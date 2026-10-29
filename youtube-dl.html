@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube動画ダウンローダー</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif}
+body{max-width:700px;margin:40px auto;padding:0 20px;line-height:1.6;background:#f5f5f5}
+h1{text-align:center;color:#2d3748;margin-bottom:30px}
+.card{background:white;padding:30px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.1)}
+input{width:100%;padding:14px;border:2px solid #e2e8f0;border-radius:8px;font-size:16px;margin-bottom:15px}
+button{width:100%;padding:14px;background:#3182ce;color:white;border:none;border-radius:8px;font-size:16px;font-weight:bold;cursor:pointer;transition:background .2s}
+button:hover{background:#2b6cb0}
+button:disabled{background:#a0aec0;cursor:not-allowed}
+.result{margin-top:25px;display:none}
+.video-info{padding:15px;background:#f7fafc;border-radius:8px;margin-bottom:15px}
+.dl-btn{display:inline-block;padding:10px 18px;background:#38a169;color:white;text-decoration:none;border-radius:6px;margin:5px;font-weight:bold}
+.dl-btn:hover{background:#2f855a}
+.note{margin-top:25px;padding:15px;background:#fffaf0;border-left:4px solid #ed8936;border-radius:4px;font-size:14px;color:#744210}
+.loading{text-align:center;padding:20px;color:#4a5568;display:none}
+.error{margin-top:15px;padding:12px;background:#fff5f5;border-left:4px solid #e53e3e;color:#c53030;border-radius:4px;display:none}
+.format-group{margin:10px 0;padding:10px;background:#f7fafc;border-radius:6px}
+.format-group strong{display:block;margin-bottom:8px}
+</style>
+</head>
+<body>
+
+<h1>🎬 YouTube動画ダウンローダー</h1>
+<div class="card">
+  <input type="text" id="urlInput" placeholder="YouTubeのURLを貼り付けてください（例: https://www.youtube.com/watch?v=xxxx）">
+  <button id="fetchBtn">解析してダウンロードリンクを表示</button>
+  
+  <div class="loading" id="loading">🔍 動画情報を取得中です…<br>しばらくお待ちください</div>
+  <div class="error" id="errorBox"></div>
+  
+  <div class="result" id="resultArea">
+    <div class="video-info">
+      <h3 id="videoTitle"></h3>
+      <p id="videoMeta"></p>
+    </div>
+    <div id="downloadLinks"></div>
+  </div>
+</div>
+
+<div class="note">
+  <strong>⚠️ 注意</strong><br>
+  ・このツールはインターネット接続が必要です<br>
+  ・著作権保護されたコンテンツの無許可ダウンロードは法律で禁止されている場合があります<br>
+  ・個人利用の範囲内で、正当に許可された動画にのみご使用ください<br>
+  ・YouTubeの仕様変更により突然動作しなくなる場合があります
+</div>
+
+<script>
+const urlInput = document.getElementById('urlInput');
+const fetchBtn = document.getElementById('fetchBtn');
+const loading = document.getElementById('loading');
+const resultArea = document.getElementById('resultArea');
+const errorBox = document.getElementById('errorBox');
+const videoTitle = document.getElementById('videoTitle');
+const videoMeta = document.getElementById('videoMeta');
+const downloadLinks = document.getElementById('downloadLinks');
+
+// YouTubeの動画IDを抽出
+function extractVideoId(url) {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+    /youtube\.com\/shorts\/([^&\n?#]+)/
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+// メッセージ表示切り替え
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.style.display = 'block';
+  loading.style.display = 'none';
+  resultArea.style.display = 'none';
+}
+
+function resetUI() {
+  errorBox.style.display = 'none';
+  resultArea.style.display = 'none';
+  downloadLinks.innerHTML = '';
+}
+
+// メイン処理
+fetchBtn.addEventListener('click', async () => {
+  resetUI();
+  const url = urlInput.value.trim();
+  if (!url) {
+    showError('URLを入力してください');
+    return;
+  }
+
+  const videoId = extractVideoId(url);
+  if (!videoId) {
+    showError('YouTubeのURLを認識できませんでした。正しいURLを入力してください。');
+    return;
+  }
+
+  loading.style.display = 'block';
+  fetchBtn.disabled = true;
+
+  try {
+    // 動画情報取得（CORS対応の公開APIを利用）
+    const res = await fetch(`https://cors-anywhere.herokuapp.com/https://yt-downloader-api.vercel.app/api/info?id=${videoId}`, {
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!res.ok) throw new Error('情報取得に失敗しました');
+    const data = await res.json();
+
+    if (!data || !data.formats || data.formats.length === 0) {
+      throw new Error('ダウンロードリンクを取得できませんでした。時間をおいて再試行するか、公式サイトをご利用ください。');
+    }
+
+    // 結果表示
+    videoTitle.textContent = data.title || `動画ID: ${videoId}`;
+    videoMeta.textContent = `長さ: ${data.duration ? Math.floor(data.duration/60)+':'+String(data.duration%60).padStart(2,'0') : '不明'}`;
+
+    // 動画フォーマット（画質別）
+    const videoFormats = data.formats.filter(f => f.vcodec !== 'none').sort((a,b) => (b.height||0)-(a.height||0));
+    // 音声のみ
+    const audioFormats = data.formats.filter(f => f.acodec !== 'none' && f.vcodec === 'none').sort((a,b) => (b.bitrate||0)-(a.bitrate||0));
+
+    let html = '';
+    if (videoFormats.length > 0) {
+      html += '<div class="format-group"><strong>📹 動画（MP4）</strong>';
+      for (const f of videoFormats.slice(0,5)) {
+        const label = `${f.height||'不明'}p · ${(f.filesize/1024/1024).toFixed(1)}MB`;
+        html += `<a class="dl-btn" href="${f.url}" download target="_blank">${label}</a>`;
+      }
+      html += '</div>';
+    }
+
+    if (audioFormats.length > 0) {
+      html += '<div class="format-group"><strong>🎵 音声のみ（MP3）</strong>';
+      for (const f of audioFormats.slice(0,3)) {
+        const label = `音声のみ · ${(f.filesize/1024/1024).toFixed(1)}MB`;
+        html += `<a class="dl-btn" href="${f.url}" download target="_blank">${label}</a>`;
+      }
+      html += '</div>';
+    }
+
+    downloadLinks.innerHTML = html;
+    resultArea.style.display = 'block';
+
+  } catch (err) {
+    // 代替案を表示
+    showError(
+      '申し訳ありません、このファイル単体では現在ダウンロードリンクを取得できません。\n' +
+      '✅ 一番確実な方法：ブラウザで https://awakest.net/youtube-video-downloader/ を開いてご利用ください。\n\n' +
+      '理由：動画リンクの解析処理はサーバー側で行われるため、単体HTMLファイルでは再現が難しい仕組みになっています。'
+    );
+  } finally {
+    loading.style.display = 'none';
+    fetchBtn.disabled = false;
+  }
+});
+
+// Enterキーで実行
+urlInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') fetchBtn.click();
+});
+</script>
+</body>
+</html>
